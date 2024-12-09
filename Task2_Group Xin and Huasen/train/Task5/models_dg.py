@@ -47,7 +47,7 @@ main: construction of the NN model
 
 def main(**kwargs):
     # define input shape
-    Cs = tf.keras.Input(shape=[5])
+    Cs = tf.keras.Input(shape=[19])
     # define which (custom) layers the model uses
     Ws = _C_to_W(**kwargs)(Cs)
     # connect input and output
