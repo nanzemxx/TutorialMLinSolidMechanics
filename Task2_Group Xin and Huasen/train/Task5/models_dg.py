@@ -28,54 +28,48 @@ _x_to_y: custom trainable layer
 
 """
 
-class MyModel(Model):
+class F_to_W_and_P(layers.Layer):
     def __init__(self):
-        super(MyModel, self).__init__()
-        self.dense1 = layers.Dense(64, activation='relu')
-        self.dense2 = layers.Dense(64, activation='relu')
-        self.out_layer = layers.Dense(1, activation='linear')
-
-    def call(self, inputs, training=False):
-        x = self.dense1(inputs)
-        x = self.dense2(x)
-        return self.out_layer(x)
-
-    def train_step(self, data):
-        # data是fit传入的数据，通常为 (X_batch, (W_batch, P_batch))
-        X_batch, y_batch = data
-        W_batch, P_batch = y_batch  # y_batch可以是tuple或list，此处假设传入(W_batch, P_batch)
-
-        # 前9维为F，需要对其求导。要确保X_batch是张量且可求导。
-        # 通常X_batch是tf.Tensor但非Variable，我们可以在tape中watch它。
+        super(F_to_W_and_P, self).__init__()
+        self.ls  = [layers.Dense(16, activation='softplus')]
+        self.ls += [layers.Dense(16, activation='softplus', kernel_constraint=constraints.NonNeg())]
+        self.ls += [layers.Dense(1,  activation='linear', kernel_constraint=constraints.NonNeg())]
+    
+    def call(self, inputs):
+        F, Cof_F, det_F = inputs
+        x_input = tf.concat([F, Cof_F, det_F], axis=-1)  # 保留一个原始输入变量
         with tf.GradientTape() as tape:
-            with tf.GradientTape() as tape_F:
-                tape_F.watch(X_batch)
-                W_pred = self(X_batch, training=True)
-            
-            # 对W关于F求导
-            # 假设X_batch[:, :9]为F，求导后形状为 (batch_size, 9)
-            dW_dF = tape_F.gradient(W_pred, X_batch)[:, :9]
+            tape.watch(x_input)  # 监视原始输入
+            x = x_input
+            for layer in self.ls:
+                x = layer(x)
+            W = x
+                
+                # 计算 W 对 F 的偏导数 P
+        gradients = tape.gradient(W, x_input)
+        P = gradients[:, :9]  # 取出 P
 
-            # 计算损失
-            loss_W = tf.reduce_mean((W_pred - W_batch)**2)
-            loss_P = tf.reduce_mean((dW_dF - P_batch)**2)
-            loss = loss_W + loss_P
-
-        # 对模型参数求导并更新
-        grads = tape.gradient(loss, self.trainable_variables)
-        self.optimizer.apply_gradients(zip(grads, self.trainable_variables))
-
-        # 这里返回的字典会显示在fit的日志中
-        return {"loss": loss, "loss_W": loss_W, "loss_P": loss_P}
-
+        
+        return W, P  # 返回 W 和 P
 # %%   
 """
 main: construction of the NN model
 
 """
 
-def main(**kwargs):
-    model = MyModel()
-    model.compile(optimizer=tf.keras.optimizers.Adam(1e-3))
+def main():
+    # 定义输入：F (9维), Cof(F) (9维), det(F) (1维)
+    F_input = tf.keras.Input(shape=[9], name="F_input")
+    Cof_F_input = tf.keras.Input(shape=[9], name="Cof_F_input")
+    det_F_input = tf.keras.Input(shape=[1], name="det_F_input")
+    
+    # 自定义层，计算 W 和 P
+    W, P = F_to_W_and_P()([F_input, Cof_F_input, det_F_input])
+    
+    # 构建模型，包含两个输出
+    model = tf.keras.Model(inputs=[F_input, Cof_F_input, det_F_input], outputs=[W, P])
+    
+    # 编译模型，两个输出都使用均方误差损失
+    model.compile(optimizer='adam', loss=['mse', 'mse'])
     return model
 
